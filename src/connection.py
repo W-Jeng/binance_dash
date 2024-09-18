@@ -1,40 +1,48 @@
 import asyncio
 import websockets
 import json
+import httpx
+import time
 
 class BinanceConnection:
     '''
     This establishes binance connection using multiple websocket
     '''
     BASE_URL = 'https://api.binance.com/api/v3/depth'
+    MARKET_DEPTH = 5
+    MAX_CONCURRENT = 5  
 
     def __init__(self, symbols):
         self.symbols = symbols
 
-    async def connect_s(self, symbol: str) -> None:
+    async def fetch_one(self, semaphore: asyncio.Semaphore, symbol: str) -> None:
         # establish single connection
         print(f'Initiating connection on symbol: {symbol}')
-        ws_url = f'{self.BASE_URL}{symbol}@{self.CONNECTION_INFO}'
+        params = {
+            'symbol': symbol,
+            'limit': self.MARKET_DEPTH 
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.get(self.BASE_URL, params=params)    
+            response.raise_for_status()
 
-        async with websockets.connect(ws_url) as ws:
-            print(f'Connection established on url: {ws_url}')
-            while (True):
-                try:
-                    msg = await ws.recv()
-                    data = json.loads(msg)
-                    print(f'symbol: {symbol}, DATA: {data}')
-                except Exception as err:
-                    print(f'Error occured on symbol {symbol}; msg: {err}')
-        return
+        return response.json()
 
-    async def connect_mult(self) -> None:
-        ws_coroutine = [self.connect_s(sym) for sym in self.symbols]
-        await asyncio.gather(*ws_coroutine)
+    async def fetch_multiple(self, symbols: str) -> None:
+        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+        tasks = [self.fetch_one(semaphore, symbol) for symbol in symbols]
+
+        for coroutine_obj in asyncio.as_completed(tasks):
+            resp = await coroutine_obj
+            print(resp)
         return
 
 if __name__ == '__main__':
-    symbols = ['BTCUSDT']
+    start_time = time.time()
+    symbols = ['BTCUSDT', 'ETHUSDT']
     binance_connection = BinanceConnection(symbols)
-    asyncio.run(binance_connection.connect_mult())
+    asyncio.run(binance_connection.fetch_multiple(symbols))
+    end_time = time.time()
+    print(f'Time taken: {round(end_time-start_time,4)}')
 
 
