@@ -10,13 +10,13 @@ class ResponseObject:
     symbol: str
     data: dict
 
-class BinanceConnection:
+class BinanceData:
     '''
     This establishes binance connection using multiple websocket
     '''
     BASE_URL = 'https://api.binance.com/api/v3/depth'
     MARKET_DEPTH = 5
-    MAX_CONCURRENT = 5  
+    MAX_CONCURRENT = 10  
 
     def __init__(self, symbols):
         self.symbols = symbols
@@ -25,7 +25,6 @@ class BinanceConnection:
                         semaphore: asyncio.Semaphore,
                         symbol: str) -> None:
         # establish single connection
-        print(f'Initiating connection on symbol: {symbol}')
         params = {
             'symbol': symbol,
             'limit': self.MARKET_DEPTH 
@@ -36,20 +35,31 @@ class BinanceConnection:
 
         return ResponseObject(symbol=symbol, data=response.json())
 
-    async def fetch_multiple(self) -> None:
+    async def fetch_multiple(self, client: httpx.AsyncClient, semaphore: asyncio.Semaphore) -> None:
+        tasks = [self.fetch_one(client, semaphore, symbol) for symbol in self.symbols]
+        for coroutine_obj in asyncio.as_completed(tasks):
+            resp = await coroutine_obj
+            print(resp)
+        return
+
+    async def fetch_forever(self, cycle_per_second: float = 2) -> None:
         semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+        second_per_cycle = 1/cycle_per_second
         async with httpx.AsyncClient() as client:
-            tasks = [self.fetch_one(client, semaphore, symbol) for symbol in self.symbols]
-            for coroutine_obj in asyncio.as_completed(tasks):
-                resp = await coroutine_obj
-                print(resp)
+            while (True):
+                cycle_start = time.time()
+                print(f'Cycle start: {cycle_start}')
+                await self.fetch_multiple(client, semaphore)
+                cycle_end = time.time()
+                cycle_time = cycle_end-cycle_start
+                if (cycle_time < second_per_cycle):
+                    time.sleep(second_per_cycle-cycle_time)
         return
 
 if __name__ == '__main__':
     start_time = time.time()
-    symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'SOLUSDT']
-    binance_connection = BinanceConnection(symbols)
-    asyncio.run(binance_connection.fetch_multiple())
+    binance_data = BinanceData(symbols)
+    asyncio.run(binance_data.fetch_forever(0.5))
     end_time = time.time()
     print(f'Time taken: {round(end_time-start_time,4)}')
 
